@@ -1,9 +1,19 @@
 import QDC
+import runner
+import graph
+import programs.program1
 # Initialize the data center
 qdc = QDC.QDC()
-qdc.add_rack("Rack1", ["QPU1", "QPU2"], 4)  # Each QPU has 2 qubits
-qdc.add_rack("Rack2", ["QPU3"], 3)
+qdc.add_rack("Rack1", ["QPU0", "QPU1"], 5)
+qdc.add_rack("Rack2", ["QPU2", "QPU3"], 5)
 
+g= graph.Graph(qdc,1)
+
+my_runner= runner.Runner(g.weights,qdc)
+my_runner.run(programs.program1.program1(4))
+
+
+'''
 # Create EPR pairs between different qubits
 # Correct: Using different qubit indices (0 and 1)
 qdc.create_epr_pair("Rack1", "QPU1", 0, "Rack1", "QPU2", 0, "EPR_R1_internal")  # In-rack
@@ -16,3 +26,5 @@ qdc.perform_remote_operation("Rack1", "QPU2", 3, "Rack2", "QPU3", 1, "EPR_R1_to_
 
 print("Circuit executed successfully!")
 print(qdc.circuit)
+
+'''

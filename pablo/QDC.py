@@ -8,6 +8,7 @@ class QPU:
         self.name = name
         self.qubits = [cirq.NamedQubit(f"{name}_q{i}") for i in range(num_qubits)]
         self.rack_id = rack_id
+        self.next_free_qubit=0
         
 class Rack:
     def __init__(self, rack_id: str, qpu_names: List[str], qubits_per_qpu: int):
