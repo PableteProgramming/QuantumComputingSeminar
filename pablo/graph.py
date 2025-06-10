@@ -1,7 +1,7 @@
 import QDC
 
 class Graph:
-    def __init__(self,qdc: QDC,startweight):
+    def __init__(self,qdc: QDC.QDC,startweight):
         self.qdc=qdc
         self.weights= []
         count=0
