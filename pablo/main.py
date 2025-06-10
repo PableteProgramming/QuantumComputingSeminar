@@ -1,11 +1,12 @@
 import QDC
 import QPU
 import Rack
+import graph
 
-qpua1= QPU.QPU("A1",10)
-qpua2= QPU.QPU("A2",5)
-qpub1= QPU.QPU("B1",20)
-qpub2= QPU.QPU("B2",3)
+qpua1= QPU.QPU(1,10)
+qpua2= QPU.QPU(2,5)
+qpub1= QPU.QPU(3,20)
+qpub2= QPU.QPU(4,3)
 
 rackA= Rack.Rack("A")
 rackA.addQPU(qpua1)
@@ -20,3 +21,7 @@ qdc.addRack(rackA)
 qdc.addRack(rackB)
 
 qdc.printInfo()
+
+graph= graph.Graph(qdc)
+
+graph.generateGraph(10)
