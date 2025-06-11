@@ -1,6 +1,49 @@
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 import cirq
-import numpy as np
+import warnings
+import time
+
+class EPRObject:
+    def __init__(self, 
+                 qdc: 'QDC',
+                 name: str,
+                 qubits: Tuple[cirq.Qid, cirq.Qid],
+                 connection_type: str,
+                 src_rack: str,
+                 src_qpu: str,
+                 dest_rack: str,
+                 dest_qpu: str):
+        self.qdc = qdc
+        self.name = name
+        self.qubits = qubits
+        self.connection_type = connection_type
+        self.src_rack = src_rack
+        self.src_qpu = src_qpu
+        self.dest_rack = dest_rack
+        self.dest_qpu = dest_qpu
+    
+    def perform_operation(self,
+                        control_qubit_type: str = "data",
+                        control_qubit_idx: int = 0,
+                        target_qubit_type: str = "data",
+                        target_qubit_idx: int = 0):
+        """
+        Perform remote operation using this EPR pair
+        Returns True if operation was successful, False if data qubits weren't available
+        """
+        try:
+            self.qdc._perform_remote_operation_internal(
+                self.src_rack, self.src_qpu, control_qubit_type, control_qubit_idx,
+                self.dest_rack, self.dest_qpu, target_qubit_type, target_qubit_idx,
+                self.name, self
+            )
+            return True
+        except ValueError as e:
+            warnings.warn(f"Could not perform operation: {str(e)}")
+            return False
+    
+    def __str__(self):
+        return f"EPRPair({self.name}, {self.connection_type}, {self.src_qpu}→{self.dest_qpu})"
 
 class QPU:
     def __init__(self, name: str, cross_rack_qubits: int, in_rack_qubits: int, data_qubits: int, rack_id: str):
@@ -17,24 +60,35 @@ class QPU:
         self.used_in_rack = [False] * in_rack_qubits
         self.used_data = [False] * data_qubits
         
-    def get_qubit(self, qubit_type: str, index: int) -> Optional[cirq.Qid]:
+    def get_qubit(self, qubit_type: str, index: int, mark_used: bool = True) -> Optional[cirq.Qid]:
         """Get a qubit of specified type if available"""
+        qubit = None
         if qubit_type == "cross_rack" and index < len(self.cross_rack_qubits):
-            return self.cross_rack_qubits[index]
+            qubit = self.cross_rack_qubits[index]
+            used_array = self.used_cross_rack
         elif qubit_type == "in_rack" and index < len(self.in_rack_qubits):
-            return self.in_rack_qubits[index]
+            qubit = self.in_rack_qubits[index]
+            used_array = self.used_in_rack
         elif qubit_type == "data" and index < len(self.data_qubits):
-            return self.data_qubits[index]
+            qubit = self.data_qubits[index]
+            used_array = self.used_data
+        
+        if qubit is not None and mark_used and not used_array[index]:
+            used_array[index] = True
+            return qubit
+        elif qubit is not None and not mark_used and not used_array[index]:
+            return qubit
         return None
         
-    def mark_qubit_used(self, qubit_type: str, index: int):
-        """Mark a qubit as used"""
-        if qubit_type == "cross_rack" and index < len(self.used_cross_rack):
-            self.used_cross_rack[index] = True
-        elif qubit_type == "in_rack" and index < len(self.used_in_rack):
-            self.used_in_rack[index] = True
-        elif qubit_type == "data" and index < len(self.used_data):
-            self.used_data[index] = True
+    def has_available_qubit(self, qubit_type: str) -> bool:
+        """Check if any qubit of given type is available"""
+        if qubit_type == "cross_rack":
+            return any(not used for used in self.used_cross_rack)
+        elif qubit_type == "in_rack":
+            return any(not used for used in self.used_in_rack)
+        elif qubit_type == "data":
+            return any(not used for used in self.used_data)
+        return False
 
 class Rack:
     def __init__(self, rack_id: str, qpu_configs: Dict[str, Dict[str, int]]):
@@ -55,23 +109,26 @@ class QDC:
     def __init__(self):
         self.racks: Dict[str, Rack] = {}
         self.circuit = cirq.Circuit()
-        self.epr_pairs = {}
+        self.epr_pairs: Dict[str, EPRObject] = {}
         self.timing_stats = {
             "in-rack": {"count": 0, "total_delay": 0},
             "cross-rack": {"count": 0, "total_delay": 0}
         }
+        self.epr_generation_time = None
+        self.operation_start_time = None
+        self.measured_latency = None
         
     def add_rack(self, rack_id: str, qpu_configs: Dict[str, Dict[str, int]]):
         """Add a rack with QPUs configured with specific qubit types"""
         self.racks[rack_id] = Rack(rack_id, qpu_configs)
     
-    def get_qubit(self, rack_id: str, qpu_name: str, qubit_type: str, qubit_idx: int) -> cirq.Qid:
+    def get_qubit(self, rack_id: str, qpu_name: str, qubit_type: str, qubit_idx: int, 
+                 mark_used: bool = True) -> Optional[cirq.Qid]:
         """Get a specific type of qubit from a QPU"""
         qpu = self.racks[rack_id].qpus[qpu_name]
-        qubit = qpu.get_qubit(qubit_type, qubit_idx)
-        if qubit is None:
-            raise ValueError(f"No {qubit_type} qubit at index {qubit_idx} in QPU {qpu_name}")
-        qpu.mark_qubit_used(qubit_type, qubit_idx)
+        qubit = qpu.get_qubit(qubit_type, qubit_idx, mark_used)
+        if qubit is None and mark_used:
+            warnings.warn(f"No available {qubit_type} qubit at index {qubit_idx} in QPU {qpu_name}")
         return qubit
     
     def get_qpu(self, qpu_name: str) -> Optional[QPU]:
@@ -89,15 +146,23 @@ class QDC:
     def create_epr_pair(self, 
                        src_rack: str, src_qpu: str, 
                        dest_rack: str, dest_qpu: str,
-                       pair_name: str = None) -> str:
-        """Create EPR pair with rack awareness, automatically selecting appropriate qubits"""
+                       pair_name: str = None) -> Optional[EPRObject]:
+        """
+        Create EPR pair with rack awareness, automatically selecting appropriate qubits
+        Returns EPRObject if successful, None if no qubits available
+        """
         # Determine connection type and select qubit type
         connection_type = "in-rack" if src_rack == dest_rack else "cross-rack"
         qubit_type = "in_rack" if connection_type == "in-rack" else "cross_rack"
         
-        # Find first available qubit of the appropriate type in each QPU
+        # Get QPU objects
         src_qpu_obj = self.racks[src_rack].qpus[src_qpu]
         dest_qpu_obj = self.racks[dest_rack].qpus[dest_qpu]
+        
+        # Check if both QPUs have available qubits of needed type
+        if not src_qpu_obj.has_available_qubit(qubit_type) or not dest_qpu_obj.has_available_qubit(qubit_type):
+            warnings.warn(f"Cannot create EPR pair - no available {qubit_type} qubits in one of the QPUs")
+            return None
         
         # Find first unused qubit of the correct type in source QPU
         src_qubits = src_qpu_obj.in_rack_qubits if connection_type == "in-rack" else src_qpu_obj.cross_rack_qubits
@@ -110,7 +175,8 @@ class QDC:
         dest_idx = next((i for i, used in enumerate(dest_used) if not used), None)
         
         if src_idx is None or dest_idx is None:
-            raise ValueError(f"No available {qubit_type} qubits in one of the QPUs")
+            warnings.warn(f"Couldn't find available {qubit_type} qubits during allocation")
+            return None
         
         # Get the actual qubits
         q1 = src_qubits[src_idx]
@@ -124,15 +190,20 @@ class QDC:
         if not pair_name:
             pair_name = f"EPR_{src_rack}-{src_qpu}-{qubit_type}{src_idx}_to_{dest_rack}-{dest_qpu}-{qubit_type}{dest_idx}"
         
-        # Store EPR pair information
-        self.epr_pairs[pair_name] = {
-            'qubits': (q1, q2),
-            'type': connection_type,
-            'src_rack': src_rack,
-            'dest_rack': dest_rack,
-            'src_qubit_type': qubit_type,
-            'dest_qubit_type': qubit_type
-        }
+        # Create EPR pair object
+        epr_obj = EPRObject(
+            qdc=self,
+            name=pair_name,
+            qubits=(q1, q2),
+            connection_type=connection_type,
+            src_rack=src_rack,
+            src_qpu=src_qpu,
+            dest_rack=dest_rack,
+            dest_qpu=dest_qpu
+        )
+        
+        # Store the EPR pair
+        self.epr_pairs[pair_name] = epr_obj
         
         # Add gates to circuit
         self.circuit.append([
@@ -144,27 +215,67 @@ class QDC:
         delay = 10 if connection_type == "in-rack" else 100  # ns
         self.add_delay(delay, connection_type)
         
-        return pair_name
+        return epr_obj
     
-    def perform_remote_operation(self, 
-                               control_rack: str, control_qpu: str, control_qubit_type: str, control_qubit_idx: int,
-                               target_rack: str, target_qpu: str, target_qubit_type: str, target_qubit_idx: int,
-                               epr_pair_name: str):
-        """Perform operation with rack-aware timing and qubit type awareness"""
-        epr_info = self.epr_pairs[epr_pair_name]
-        epr_control, epr_target = epr_info['qubits']
+    def finalize_epr_generation(self):
+        """
+        Call this after all EPR pairs have been created
+        to mark the end of EPR generation phase
+        """
+        self.epr_generation_time = time.time()
+    
+    def begin_operations(self):
+        """
+        Call this before starting operations to mark
+        the beginning of the operation phase
+        """
+        if self.epr_generation_time is None:
+            warnings.warn("EPR generation time not recorded - call finalize_epr_generation() first")
+            return
         
-        # Get the actual qubits for operation
-        control = self.get_qubit(control_rack, control_qpu, control_qubit_type, control_qubit_idx)
-        target = self.get_qubit(target_rack, target_qpu, target_qubit_type, target_qubit_idx)
+        self.operation_start_time = time.time()
+        self.measured_latency = self.operation_start_time - self.epr_generation_time
+        print(f"Measured latency between EPR generation and operations: {self.measured_latency:.6f} seconds")
+    
+    def get_measured_latency(self) -> Optional[float]:
+        """Returns the measured latency in seconds or None if not measured"""
+        return self.measured_latency
+    
+    def _perform_remote_operation_internal(self,
+                                         control_rack: str, control_qpu: str, 
+                                         control_qubit_type: str, control_qubit_idx: int,
+                                         target_rack: str, target_qpu: str, 
+                                         target_qubit_type: str, target_qubit_idx: int,
+                                         epr_pair_name: str,
+                                         epr_obj: EPRObject = None):
+        """
+        Internal implementation of remote operation
+        """
+        epr_info = self.epr_pairs[epr_pair_name] if epr_obj is None else epr_obj
+        epr_control, epr_target = epr_info.qubits
+        
+        # Try to get data qubits without marking them used first
+        control = self.get_qubit(control_rack, control_qpu, control_qubit_type, 
+                                control_qubit_idx, mark_used=False)
+        target = self.get_qubit(target_rack, target_qpu, target_qubit_type, 
+                               target_qubit_idx, mark_used=False)
+        
+        if control is None or target is None:
+            raise ValueError("Required data qubits not available")
+        
+        # Now mark them as used (this should succeed since we checked availability)
+        control = self.get_qubit(control_rack, control_qpu, control_qubit_type, 
+                                control_qubit_idx, mark_used=True)
+        target = self.get_qubit(target_rack, target_qpu, target_qubit_type, 
+                               target_qubit_idx, mark_used=True)
         
         # Verify we're not using the same qubit for control and target
         if control == target:
             raise ValueError(f"Cannot perform operation on the same qubit: {control}")
         
         # Record communication delay
-        comm_delay = 20 if epr_info['type'] == "in-rack" else 200
-        self.add_delay(comm_delay, epr_info['type'])
+        comm_delay = 20 if epr_info.connection_type == "in-rack" else 200
+        self.add_delay(comm_delay, epr_info.connection_type)
         
         # Local operations - using the EPR pair's control qubit
         self.circuit.append([
@@ -179,3 +290,82 @@ class QDC:
             cirq.Z(target).with_classical_controls(f'bell_meas_{epr_pair_name}=1'),
             cirq.X(target).with_classical_controls(f'bell_meas_{epr_pair_name}=1')
         ])
+    
+    def perform_remote_operation(self, 
+                               control_rack: str, control_qpu: str, 
+                               control_qubit_type: str, control_qubit_idx: int,
+                               target_rack: str, target_qpu: str, 
+                               target_qubit_type: str, target_qubit_idx: int,
+                               epr_pair_name: str) -> bool:
+        """
+        Perform operation with rack-aware timing and qubit type awareness
+        Returns True if operation was successful, False if data qubits weren't available
+        """
+        try:
+            self._perform_remote_operation_internal(
+                control_rack, control_qpu, control_qubit_type, control_qubit_idx,
+                target_rack, target_qpu, target_qubit_type, target_qubit_idx,
+                epr_pair_name
+            )
+            return True
+        except ValueError as e:
+            warnings.warn(f"Could not perform operation: {str(e)}")
+            return False
+        
+    def __str__(self) -> str:
+        """Returns a printable summary of the QDC state"""
+        output = []
+        output.append("="*50)
+        output.append("Quantum Data Center (QDC) Summary")
+        output.append("="*50)
+        
+        # Rack and QPU information
+        output.append("\nRack Configuration:")
+        for rack_id, rack in self.racks.items():
+            output.append(f"\nRack {rack_id}:")
+            for qpu_name, qpu in rack.qpus.items():
+                # Count available qubits
+                avail_cross = sum(not used for used in qpu.used_cross_rack)
+                avail_in = sum(not used for used in qpu.used_in_rack)
+                avail_data = sum(not used for used in qpu.used_data)
+                
+                output.append(
+                    f"  {qpu_name}: "
+                    f"Cross-rack: {avail_cross}/{len(qpu.cross_rack_qubits)} available, "
+                    f"In-rack: {avail_in}/{len(qpu.in_rack_qubits)} available, "
+                    f"Data: {avail_data}/{len(qpu.data_qubits)} available"
+                )
+        
+        # EPR pairs information
+        output.append("\nEPR Pairs:")
+        if not self.epr_pairs:
+            output.append("  No EPR pairs created")
+        else:
+            for name, epr in self.epr_pairs.items():
+                output.append(
+                    f"  {name}: {epr.connection_type} between "
+                    f"{epr.src_qpu} (Rack {epr.src_rack}) and "
+                    f"{epr.dest_qpu} (Rack {epr.dest_rack})"
+                )
+        
+        # Timing statistics
+        output.append("\nTiming Statistics:")
+        for conn_type, stats in self.timing_stats.items():
+            avg_delay = stats["total_delay"] / stats["count"] if stats["count"] > 0 else 0
+            output.append(
+                f"  {conn_type}: {stats['count']} operations, "
+                f"total delay {stats['total_delay']}ns, "
+                f"avg {avg_delay:.1f}ns/operation"
+            )
+        
+        # Circuit information
+        output.append("\nCircuit Summary:")
+        output.append(f"  Moments: {len(self.circuit)}")
+        output.append(f"  Operations: {sum(len(moment.operations) for moment in self.circuit)}")
+        
+        # Measured latency if available
+        if self.measured_latency is not None:
+            output.append(f"\nMeasured Latency: {self.measured_latency:.6f} seconds")
+        
+        output.append("="*50)
+        return "\n".join(output)

@@ -33,6 +33,7 @@ def find_best_qpu_path(qdc: QDC.QDC, qpu_connections: List[Tuple[str, int, str]]
         i, j = qpu_to_idx[src], qpu_to_idx[dest]
         adj_matrix[i][j] = weight
     
+    print(adj_matrix)
     # Priority queue: (total_weight, current_qpu_idx, path, available_qubits_cache)
     heap = []
     heapq.heappush(heap, (0, qpu_to_idx[start_qpu], [start_qpu], {}))

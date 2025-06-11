@@ -1,8 +1,7 @@
 #makes communcaton between QPU1 and all others
 
-def program1(maxQPUs):
+def program1():
     coms=[]
-    if maxQPUs>1:
-        for i in range(1,maxQPUs):
-            coms.append((0,i))
-    return coms
+    for i in range(1,4):
+        coms.append((0,i))
+    return coms,4
