@@ -2,6 +2,6 @@
 
 def program1():
     coms=[]
-    for i in range(1,4):
-        coms.append((0,i))
+    for i in range(2,4):
+        coms.append((1,i))
     return coms,4

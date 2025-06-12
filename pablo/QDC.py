@@ -39,7 +39,7 @@ class EPRObject:
             )
             return True
         except ValueError as e:
-            warnings.warn(f"Could not perform operation: {str(e)}")
+            print(f"Could not perform operation: {str(e)}")
             return False
     
     def __str__(self):
@@ -89,6 +89,17 @@ class QPU:
         elif qubit_type == "data":
             return any(not used for used in self.used_data)
         return False
+        
+    def mark_qubit_used(self, qubit_type: str, index: int) -> None:
+        """Explicitly mark a specific qubit as used"""
+        if qubit_type == "cross_rack" and index < len(self.used_cross_rack):
+            self.used_cross_rack[index] = True
+        elif qubit_type == "in_rack" and index < len(self.used_in_rack):
+            self.used_in_rack[index] = True
+        elif qubit_type == "data" and index < len(self.used_data):
+            self.used_data[index] = True
+        else:
+            raise ValueError(f"Invalid qubit type {qubit_type} or index {index}")
 
 class Rack:
     def __init__(self, rack_id: str, qpu_configs: Dict[str, Dict[str, int]]):
@@ -114,9 +125,16 @@ class QDC:
             "in-rack": {"count": 0, "total_delay": 0},
             "cross-rack": {"count": 0, "total_delay": 0}
         }
-        self.epr_generation_time = None
-        self.operation_start_time = None
-        self.measured_latency = None
+        self.epr_generation_time_ns = None  # Changed to nanoseconds
+        self.operation_start_time_ns = None
+        self.measured_latency_ns = None    # Now tracking nanoseconds
+
+    def get_names(self):
+        names=[]
+        for rack in self.racks.values():
+            for qpuName in rack.qpus.keys():
+                names.append(qpuName)
+        return names
         
     def add_rack(self, rack_id: str, qpu_configs: Dict[str, Dict[str, int]]):
         """Add a rack with QPUs configured with specific qubit types"""
@@ -220,26 +238,29 @@ class QDC:
     def finalize_epr_generation(self):
         """
         Call this after all EPR pairs have been created
-        to mark the end of EPR generation phase
+        to mark the end of EPR generation phase (in ns)
         """
-        self.epr_generation_time = time.time()
+        self.epr_generation_time_ns = time.perf_counter_ns()
     
     def begin_operations(self):
         """
         Call this before starting operations to mark
-        the beginning of the operation phase
+        the beginning of the operation phase (in ns)
         """
-        if self.epr_generation_time is None:
+        if self.epr_generation_time_ns is None:
             warnings.warn("EPR generation time not recorded - call finalize_epr_generation() first")
             return
         
-        self.operation_start_time = time.time()
-        self.measured_latency = self.operation_start_time - self.epr_generation_time
-        print(f"Measured latency between EPR generation and operations: {self.measured_latency:.6f} seconds")
+        self.operation_start_time_ns = time.perf_counter_ns()
+        self.measured_latency_ns = self.operation_start_time_ns - self.epr_generation_time_ns
+    
+    def get_measured_latency_ns(self) -> Optional[int]:
+        """Returns the measured latency in nanoseconds or None if not measured"""
+        return self.measured_latency_ns
     
     def get_measured_latency(self) -> Optional[float]:
-        """Returns the measured latency in seconds or None if not measured"""
-        return self.measured_latency
+        """Returns the measured latency in seconds (backward compatibility)"""
+        return self.measured_latency_ns if self.measured_latency_ns is not None else None
     
     def _perform_remote_operation_internal(self,
                                          control_rack: str, control_qpu: str, 
@@ -310,6 +331,7 @@ class QDC:
             return True
         except ValueError as e:
             warnings.warn(f"Could not perform operation: {str(e)}")
+            print(self)
             return False
         
     def __str__(self) -> str:
@@ -364,8 +386,8 @@ class QDC:
         output.append(f"  Operations: {sum(len(moment.operations) for moment in self.circuit)}")
         
         # Measured latency if available
-        if self.measured_latency is not None:
-            output.append(f"\nMeasured Latency: {self.measured_latency:.6f} seconds")
+        if self.measured_latency_ns is not None:
+            output.append(f"\nMeasured Latency: {self.measured_latency_ns:.6f} seconds")
         
         output.append("="*50)
         return "\n".join(output)

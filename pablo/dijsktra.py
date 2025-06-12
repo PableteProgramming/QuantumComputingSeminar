@@ -1,95 +1,117 @@
 import heapq
-import QDC
 from typing import List, Dict, Tuple, Optional
+import QDC
 
-def find_best_qpu_path(qdc: QDC.QDC, qpu_connections: List[Tuple[str, int, str]], start_qpu: str, end_qpu: str) -> Tuple[int, List[str]]:
+def find_best_qpu_path_matrix(
+    qdc: QDC.QDC,
+    weight_matrix: List[List[int]],
+    qpu_names: List[str],
+    start_qpu: str,
+    end_qpu: str
+) -> Tuple[int, List[str]]:
     """
-    Finds the best path between QPUs considering:
-    - Connection weights (appreciation)
+    Finds the best path between QPUs using a weight matrix, considering:
+    - Connection weights from the matrix
     - Qubit availability for required connection types
     
     Args:
         qdc: QuantumDataCenter instance
-        qpu_connections: List of (qpu_source, weight, qpu_dest) tuples
+        weight_matrix: n x n matrix where weight_matrix[i][j] = weight from QPU i to QPU j
+                      (0 means no connection)
+        qpu_names: List of QPU names in the same order as matrix indices
         start_qpu: Starting QPU name
         end_qpu: Target QPU name
         
     Returns:
         Tuple of (total_weight, path_as_qpu_names) or (-1, []) if no path found
     """
+    # Validate input matrix
+    if not weight_matrix or len(weight_matrix) != len(qpu_names) or any(len(row) != len(qpu_names) for row in weight_matrix):
+        print(qpu_names)
+        print(weight_matrix)
+        raise ValueError("Invalid weight matrix dimensions")
     
-    # Build adjacency list and QPU name to index mapping
-    qpu_names = set()
-    for src, _, dest in qpu_connections:
-        qpu_names.add(src)
-        qpu_names.add(dest)
-    qpu_names = list(qpu_names)
-    qpu_to_idx = {name: i for i, name in enumerate(qpu_names)}
+    # Create mapping from QPU name to index with validation
+    qpu_to_idx = {}
+    for i, name in enumerate(qpu_names):
+        if not isinstance(name, str):
+            raise ValueError(f"QPU name at index {i} is not a string: {name}")
+        if name in qpu_to_idx:
+            raise ValueError(f"Duplicate QPU name: {name}")
+        qpu_to_idx[name] = i
+    
+    # Verify start and end QPUs exist
+    if start_qpu not in qpu_to_idx:
+        raise ValueError(f"Start QPU '{start_qpu}' not found in qpu_names")
+    if end_qpu not in qpu_to_idx:
+        raise ValueError(f"End QPU '{end_qpu}' not found in qpu_names")
+    
+    start_idx = qpu_to_idx[start_qpu]
+    end_idx = qpu_to_idx[end_qpu]
     n = len(qpu_names)
     
-    # Build adjacency matrix
-    adj_matrix = [[0] * n for _ in range(n)]
-    for src, weight, dest in qpu_connections:
-        i, j = qpu_to_idx[src], qpu_to_idx[dest]
-        adj_matrix[i][j] = weight
-    
-    print(adj_matrix)
-    # Priority queue: (total_weight, current_qpu_idx, path, available_qubits_cache)
+    # Priority queue: (total_weight, current_qpu_idx, path, used_qubits)
+    # used_qubits is a dict: {(qpu_name, qubit_type): count_used}
     heap = []
-    heapq.heappush(heap, (0, qpu_to_idx[start_qpu], [start_qpu], {}))
+    heapq.heappush(heap, (0, start_idx, [start_qpu], {}))
     
-    # Track best distances and qubit usage
-    distances = {qpu: float('inf') for qpu in qpu_names}
-    distances[start_qpu] = 0
+    # Track best distances
+    distances = {i: float('inf') for i in range(n)}
+    distances[start_idx] = 0
     
     while heap:
-        current_dist, current_idx, path, qubit_cache = heapq.heappop(heap)
+        current_dist, current_idx, path, used_qubits = heapq.heappop(heap)
         current_qpu = qpu_names[current_idx]
         
-        if current_qpu == end_qpu:
+        if current_idx == end_idx:
             return current_dist, path
         
-        if current_dist > distances[current_qpu]:
+        if current_dist > distances[current_idx]:
             continue
         
+        current_qpu_obj = qdc.get_qpu(current_qpu)
+        if not current_qpu_obj:
+            continue
+            
         for neighbor_idx in range(n):
-            weight = adj_matrix[current_idx][neighbor_idx]
+            weight = weight_matrix[current_idx][neighbor_idx]
             if weight == 0:  # No connection
                 continue
                 
             neighbor_qpu = qpu_names[neighbor_idx]
-            
-            # Determine connection type (in-rack or cross-rack)
-            current_qpu_obj = qdc.get_qpu(current_qpu)
             neighbor_qpu_obj = qdc.get_qpu(neighbor_qpu)
-            
-            if not current_qpu_obj or not neighbor_qpu_obj:
-                continue  # Invalid QPU
+            if not neighbor_qpu_obj:
+                continue
                 
-            connection_type = "in-rack" if current_qpu_obj.rack_id == neighbor_qpu_obj.rack_id else "cross-rack"
-            qubit_type = "in_rack" if connection_type == "in-rack" else "cross_rack"
+            # Determine connection type and required qubit type
+            if current_qpu_obj.rack_id == neighbor_qpu_obj.rack_id:
+                connection_type = "in-rack"
+                qubit_type = "in_rack"
+            else:
+                connection_type = "cross-rack"
+                qubit_type = "cross_rack"
             
             # Check qubit availability in both QPUs
-            # Use cached available counts or get fresh ones
-            current_available = qubit_cache.get((current_qpu, qubit_type), 
-                sum(1 for used in (current_qpu_obj.used_in_rack if qubit_type == "in_rack" 
-                                  else current_qpu_obj.used_cross_rack) if not used))
+            def get_available(qpu_obj, qpu_name):
+                total = (len(qpu_obj.in_rack_qubits) if qubit_type == "in_rack" 
+                         else len(qpu_obj.cross_rack_qubits))
+                used = used_qubits.get((qpu_name, qubit_type), 0)
+                return total - used
             
-            neighbor_available = qubit_cache.get((neighbor_qpu, qubit_type),
-                sum(1 for used in (neighbor_qpu_obj.used_in_rack if qubit_type == "in_rack" 
-                                  else neighbor_qpu_obj.used_cross_rack) if not used))
+            current_available = get_available(current_qpu_obj, current_qpu)
+            neighbor_available = get_available(neighbor_qpu_obj, neighbor_qpu)
             
             if current_available < 1 or neighbor_available < 1:
                 continue  # Skip if not enough qubits available
                 
-            # Update the cache with hypothetical usage
-            new_qubit_cache = qubit_cache.copy()
-            new_qubit_cache[(current_qpu, qubit_type)] = current_available - 1
-            new_qubit_cache[(neighbor_qpu, qubit_type)] = neighbor_available - 1
+            # Update the used qubits count for this path
+            new_used_qubits = used_qubits.copy()
+            new_used_qubits[(current_qpu, qubit_type)] = used_qubits.get((current_qpu, qubit_type), 0) + 1
+            new_used_qubits[(neighbor_qpu, qubit_type)] = used_qubits.get((neighbor_qpu, qubit_type), 0) + 1
             
             new_dist = current_dist + weight
-            if new_dist < distances[neighbor_qpu]:
-                distances[neighbor_qpu] = new_dist
-                heapq.heappush(heap, (new_dist, neighbor_idx, path + [neighbor_qpu], new_qubit_cache))
+            if new_dist < distances[neighbor_idx]:
+                distances[neighbor_idx] = new_dist
+                heapq.heappush(heap, (new_dist, neighbor_idx, path + [neighbor_qpu], new_used_qubits))
     
     return -1, []  # No path found
