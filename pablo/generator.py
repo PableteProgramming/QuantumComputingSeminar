@@ -13,13 +13,10 @@ class Generator:
         # Create a quantum data center
         self.qdc = QDC.QDC()
 
-        # Add racks with QPUs having different qubit types
-        self.qdc.add_rack("Rack1", {
-            "QPU1": {"cross_rack": 10, "in_rack": 10, "data": data_qubits["QPU1"]+maxQPus*maxQPus},
-            "QPU2": {"cross_rack": 10, "in_rack": 10, "data": data_qubits["QPU2"]+maxQPus*maxQPus}
-        })
-
-        self.qdc.add_rack("Rack2", {
-            "QPU3": {"cross_rack": 10, "in_rack": 10, "data": data_qubits["QPU3"]+maxQPus*maxQPus},
-            "QPU4": {"cross_rack": 10, "in_rack": 10, "data": data_qubits["QPU4"]+maxQPus*maxQPus}
-        })
+        for i in range(1,int(maxQPus/2)+1):
+            qubits1= data_qubits[f"QPU{i*2-1}"]+maxQPus**maxQPus
+            qubits2= data_qubits[f"QPU{i*2}"]+maxQPus**maxQPus
+            self.qdc.add_rack(f"Rack{i}",{
+                f"QPU{i*2-1}": {"cross_rack": qubits1, "in_rack": qubits1, "data": qubits1},
+                f"QPU{i*2}": {"cross_rack": qubits2, "in_rack": qubits2, "data": qubits2}
+            })

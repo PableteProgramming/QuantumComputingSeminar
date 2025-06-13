@@ -4,7 +4,7 @@ import QDC
 
 def find_best_qpu_path_matrix(
     qdc: QDC.QDC,
-    weight_matrix: List[List[int]],
+    weight_matrix: List[List[float]],
     qpu_names: List[str],
     start_qpu: str,
     end_qpu: str

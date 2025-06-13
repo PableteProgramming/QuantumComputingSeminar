@@ -2,6 +2,7 @@
 
 def program1():
     coms=[]
-    for i in range(2,4):
+    qpus=4
+    for i in range(2,qpus+1):
         coms.append((1,i))
-    return coms,4
+    return coms,qpus
