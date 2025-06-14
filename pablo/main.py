@@ -4,6 +4,8 @@ import torch.optim as optim
 import programs.program1
 from simulation import simulate
 
+ERROR_LATENCY=1e18
+
 # Dimensions
 _,N = programs.program1.program1()
 
@@ -33,15 +35,24 @@ def sample_weights_pos_float(mean, std):
     return sampled_clamped.detach().tolist()
 
 num_episodes = 100
+
+min= (-1,None)
+
 for episode in range(num_episodes):
     optimizer.zero_grad()
 
     # Sample positive float weights
     sampled_list = sample_weights_pos_float(mean_weights, std)
-    print(sampled_list)
 
     # Get latency (environment feedback)
     latency = simulate(sampled_list)
+    if latency <0:
+        latency= ERROR_LATENCY # in case some epr pairs could not be generated for example
+    else:
+        print(f"Latency: {latency} ns")
+        lat,_= min
+        if lat<0 or latency<lat:
+            min=(latency,sampled_list)
     reward = -latency  # maximize negative latency
 
     # For policy gradient, use clamped continuous sample
@@ -52,12 +63,8 @@ for episode in range(num_episodes):
     loss.backward()
     optimizer.step()
 
-    if episode % 100 == 0:
-        print(f"Episode {episode} - Latency: {latency:.4f} - Reward: {reward:.4f}")
-
-print("Training finished!")
-
 with torch.no_grad():
     final_weights = mean_weights.clamp(min=0)
-    print("Optimized mean weights matrix (positive floats):")
-    print(final_weights)
+    lat,l= min
+    print(f"Optimized weights matrix for a latency of {lat} ns:")
+    print(l)
