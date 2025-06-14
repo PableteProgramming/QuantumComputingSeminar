@@ -20,7 +20,7 @@ class Runner:
                 nextQpu= self.qdc.get_qpu(path[index+1])
                 self.coms.append(self.qdc.create_epr_pair(currentQpu.rack_id,currentQpu.name,nextQpu.rack_id,nextQpu.name,f"QPU{path[index]}<->QPU{path[index+1]}")) # add the communcation as an EPR pair
         
-        epr_latency, latency = self.qdc.execute()
+        _, latency = self.qdc.execute()
         return latency
 
                 

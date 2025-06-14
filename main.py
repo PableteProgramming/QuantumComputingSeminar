@@ -34,7 +34,7 @@ def sample_weights_pos_float(mean, std):
     # Convert to nested list of floats
     return sampled_clamped.detach().tolist()
 
-num_episodes = 100
+num_episodes =100
 
 min= (-1,None)
 
@@ -49,7 +49,7 @@ for episode in range(num_episodes):
     if latency <0:
         latency= ERROR_LATENCY # in case some epr pairs could not be generated for example
     else:
-        print(f"Latency: {latency} ns")
+        #print(f"Latency: {latency} ns")
         lat,_= min
         if lat<0 or latency<lat:
             min=(latency,sampled_list)
