@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import programs.program1
 from simulation import simulate
+import sys
 
 ERROR_LATENCY=1e18
 
@@ -34,7 +35,10 @@ def sample_weights_pos_float(mean, std):
     # Convert to nested list of floats
     return sampled_clamped.detach().tolist()
 
-num_episodes =100
+if len(sys.argv) >1:
+    num_episodes =sys.argv[1]
+else:
+    num_episodes =100
 
 min= (-1,None)
 
