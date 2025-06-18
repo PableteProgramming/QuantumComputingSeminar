@@ -5,6 +5,8 @@ import programs.program1
 from simulation import simulate
 import sys
 
+#generated with help of AI
+
 ERROR_LATENCY=1e18
 
 # Dimensions

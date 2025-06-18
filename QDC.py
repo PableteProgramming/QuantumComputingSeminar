@@ -2,6 +2,8 @@ from typing import Dict, Tuple, Optional
 import cirq
 import time
 
+#generated with help of AI
+
 class EPRObject:
     def __init__(self, qdc: 'QDC', name: str, qubits: Tuple[cirq.Qid, cirq.Qid],
                  connection_type: str, src_rack: str, src_qpu: str,
