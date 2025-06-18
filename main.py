@@ -36,7 +36,7 @@ def sample_weights_pos_float(mean, std):
     return sampled_clamped.detach().tolist()
 
 if len(sys.argv) >1:
-    num_episodes =sys.argv[1]
+    num_episodes = int(sys.argv[1])
 else:
     num_episodes =100
 
