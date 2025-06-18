@@ -66,5 +66,5 @@ for episode in range(num_episodes):
 with torch.no_grad():
     final_weights = mean_weights.clamp(min=0)
     lat,l= min
-    print(f"Optimized weights matrix for a latency of {lat} ns:")
+    print(f"Optimized weights matrix for a latency of {lat} ns after {num_episodes} iterations:")
     print(l)
